@@ -12,7 +12,7 @@ import {
 import { loadFont } from "@remotion/google-fonts/Inter";
 import { z } from "zod";
 
-const { fontFamily } = loadFont("normal", { weights: ["700", "800", "900"] });
+const { fontFamily } = loadFont("normal", { weights: ["400", "700"] });
 
 export const CountdownSaleSchema = z.object({
   productName: z.string(),
@@ -302,7 +302,7 @@ const PriceSection: React.FC<{
         <span
           style={{
             fontFamily,
-            fontWeight: 800,
+            fontWeight: 700,
             fontSize: 64,
             color: "rgba(255,255,255,0.55)",
             letterSpacing: -1,
@@ -350,7 +350,7 @@ const PriceSection: React.FC<{
           <span
             style={{
               fontFamily,
-              fontWeight: 800,
+              fontWeight: 700,
               fontSize: 40,
               color: "#ffffff",
             }}
@@ -484,7 +484,7 @@ const CountdownTimer: React.FC<{
       <div
         style={{
           fontFamily,
-          fontWeight: 800,
+          fontWeight: 700,
           fontSize: 40,
           color: "#FF6B35",
           letterSpacing: 4,
@@ -798,7 +798,7 @@ export const CountdownSale: React.FC<CountdownSaleProps> = ({
           <span
             style={{
               fontFamily,
-              fontWeight: 800,
+              fontWeight: 700,
               fontSize: 36,
               color: "rgba(255,255,255,0.8)",
               letterSpacing: 1,

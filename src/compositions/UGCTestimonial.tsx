@@ -30,7 +30,7 @@ type UGCTestimonialProps = z.infer<typeof UGCTestimonialSchema>;
 // ─── Font ─────────────────────────────────────────────────────────────────────
 
 const { fontFamily } = loadFont("normal", {
-  weights: ["400", "600", "700", "800"],
+  weights: ["400", "600", "700"],
 });
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -154,7 +154,7 @@ const HookScene: React.FC<{ hookText: string }> = ({ hookText }) => {
               key={i}
               style={{
                 fontFamily,
-                fontWeight: 800,
+                fontWeight: 700,
                 fontSize: 72,
                 color: "#FFFFFF",
                 lineHeight: 1.1,
@@ -344,13 +344,13 @@ const ProductRatingScene: React.FC<{
           transform: `translateY(${interpolate(textEnter, [0, 1], [24, 0])}px)`,
           opacity: textEnter,
           textAlign: "center",
-          paddingHorizontal: 48,
+          paddingLeft: 48, paddingRight: 48,
         }}
       >
         <span
           style={{
             fontFamily,
-            fontWeight: 800,
+            fontWeight: 700,
             fontSize: 44,
             color: "#FFFFFF",
             textShadow: "0 2px 20px rgba(0,0,0,0.5)",
@@ -504,7 +504,7 @@ const CTAScene: React.FC<{
         <span
           style={{
             fontFamily,
-            fontWeight: 800,
+            fontWeight: 700,
             fontSize: 48,
             color: "#FFFFFF",
             textShadow: "0 2px 20px rgba(0,0,0,0.6)",
@@ -549,7 +549,7 @@ const CTAScene: React.FC<{
           <span
             style={{
               fontFamily,
-              fontWeight: 800,
+              fontWeight: 700,
               fontSize: 36,
               color: "#FFFFFF",
               letterSpacing: 0.5,

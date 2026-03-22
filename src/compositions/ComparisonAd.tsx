@@ -199,7 +199,7 @@ const ComparisonRow: React.FC<{
               fontFamily,
               fontSize,
               color: OUR_COLOR,
-              fontWeight: 800,
+              fontWeight: 700,
               textAlign: "center",
               lineHeight: 1.1,
             }}
@@ -481,7 +481,7 @@ export const ComparisonAd: React.FC<ComparisonAdProps> = ({
                 style={{
                   fontFamily,
                   fontSize: 26,
-                  fontWeight: 800,
+                  fontWeight: 700,
                   color: "#fff",
                   letterSpacing: "0.03em",
                 }}

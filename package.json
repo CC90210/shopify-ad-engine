@@ -30,6 +30,8 @@
     "@remotion/transitions": "4.0.436",
     "@remotion/zod-types": "4.0.436",
     "dotenv": "^16.3.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
     "remotion": "^4.0.436",
     "three": "^0.160.0",
     "zod": "^3.22.0"
