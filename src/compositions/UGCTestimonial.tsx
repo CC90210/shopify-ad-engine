@@ -7,12 +7,18 @@ import {
   spring,
   Img,
   staticFile,
-  Easing,
+  Sequence,
 } from "remotion";
 import { z } from "zod";
-import { loadFont } from "@remotion/google-fonts/SpaceGrotesk";
+import { loadFont } from "@remotion/google-fonts/Inter";
 
-// ─── Schema ──────────────────────────────────────────────────────────────────
+// ─── Font — module scope, required by @remotion/google-fonts ─────────────────
+
+const { fontFamily } = loadFont("normal", {
+  weights: ["400", "700"],
+});
+
+// ─── Schema ───────────────────────────────────────────────────────────────────
 
 export const UGCTestimonialSchema = z.object({
   hookText: z.string(),
@@ -27,198 +33,475 @@ export const UGCTestimonialSchema = z.object({
 
 type UGCTestimonialProps = z.infer<typeof UGCTestimonialSchema>;
 
-// ─── Font ─────────────────────────────────────────────────────────────────────
+// ─── Scene timing ─────────────────────────────────────────────────────────────
 
-const { fontFamily } = loadFont("normal", {
-  weights: ["400", "600", "700"],
-});
-
-// ─── Constants ────────────────────────────────────────────────────────────────
-
-const SCENE_1_START = 0;
-const SCENE_2_START = 70;
-const SCENE_3_START = 220;
-const SCENE_4_START = 330;
+const SCENE_1_START = 0;   // Product reveal         frames 0–75
+const SCENE_2_START = 75;  // First notification     frames 75–135
+const SCENE_3_START = 135; // Cascade                frames 135–300
+const SCENE_4_START = 300; // CTA convergence        frames 300–450
 const TOTAL_FRAMES = 450;
 
-// Frames each testimonial line occupies before the next one begins
-const LINE_DURATION = 40;
+// ─── Notification data — hardcoded social proof ───────────────────────────────
 
-// ─── Grain Layer ──────────────────────────────────────────────────────────────
-// Generates pseudo-random dot positions based on frame to simulate film grain.
-
-const GrainLayer: React.FC<{ opacity: number }> = ({ opacity }) => {
-  const frame = useCurrentFrame();
-  const { width, height } = useVideoConfig();
-
-  // 80 dots per frame, positions seeded from frame number
-  const dots = Array.from({ length: 80 }, (_, i) => {
-    const seed = (frame * 137 + i * 1009) % 10000;
-    const x = ((seed * 7 + i * 331) % width);
-    const y = ((seed * 13 + i * 197) % height);
-    const size = ((seed % 3) + 1);
-    const dotOpacity = ((seed % 60) + 20) / 100;
-    return { x, y, size, dotOpacity };
-  });
-
-  return (
-    <AbsoluteFill style={{ opacity, pointerEvents: "none" }}>
-      <svg width={width} height={height} style={{ position: "absolute" }}>
-        {dots.map((dot, i) => (
-          <circle
-            key={i}
-            cx={dot.x}
-            cy={dot.y}
-            r={dot.size}
-            fill="rgba(255,255,255,0.9)"
-            opacity={dot.dotOpacity}
-          />
-        ))}
-      </svg>
-    </AbsoluteFill>
-  );
+type NotificationEntry = {
+  id: number;
+  type: "purchase" | "review" | "stock" | "aggregate";
+  avatar: string;
+  name: string;
+  city: string;
+  text: string;
+  time: string;
+  accentColor: string;
 };
 
-// ─── Scene 1: Hook ────────────────────────────────────────────────────────────
+const NOTIFICATIONS: NotificationEntry[] = [
+  {
+    id: 0,
+    type: "purchase",
+    avatar: "S",
+    name: "Sarah K.",
+    city: "Austin, TX",
+    text: "Sarah K. from Austin, TX just purchased this",
+    time: "2 min ago",
+    accentColor: "#F97316",
+  },
+  {
+    id: 1,
+    type: "review",
+    avatar: "M",
+    name: "Marcus T.",
+    city: "Chicago, IL",
+    text: "★★★★★  'This changed everything!' — Marcus T.",
+    time: "5 min ago",
+    accentColor: "#FBBF24",
+  },
+  {
+    id: 2,
+    type: "purchase",
+    avatar: "J",
+    name: "Jenna R.",
+    city: "Portland, OR",
+    text: "Jenna R. from Portland, OR just bought this",
+    time: "7 min ago",
+    accentColor: "#34D399",
+  },
+  {
+    id: 3,
+    type: "stock",
+    avatar: "!",
+    name: "",
+    city: "",
+    text: "Only 7 left in stock — selling fast",
+    time: "live",
+    accentColor: "#F87171",
+  },
+  {
+    id: 4,
+    type: "review",
+    avatar: "A",
+    name: "Aisha N.",
+    city: "Miami, FL",
+    text: "★★★★★  'Worth every penny' — Aisha N.",
+    time: "11 min ago",
+    accentColor: "#A78BFA",
+  },
+  {
+    id: 5,
+    type: "purchase",
+    avatar: "D",
+    name: "Dylan P.",
+    city: "Denver, CO",
+    text: "Dylan P. from Denver, CO just purchased this",
+    time: "14 min ago",
+    accentColor: "#38BDF8",
+  },
+  {
+    id: 6,
+    type: "aggregate",
+    avatar: "★",
+    name: "",
+    city: "",
+    text: "4.9 / 5  from 2,847 verified reviews",
+    time: "updated today",
+    accentColor: "#FBBF24",
+  },
+  {
+    id: 7,
+    type: "purchase",
+    avatar: "C",
+    name: "Camila V.",
+    city: "Los Angeles, CA",
+    text: "Camila V. from Los Angeles, CA just bought this",
+    time: "18 min ago",
+    accentColor: "#F472B6",
+  },
+];
 
-const HookScene: React.FC<{ hookText: string }> = ({ hookText }) => {
-  const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-  const words = hookText.split(" ");
+// Seeded pseudo-random for deterministic confetti — no Math.random() at render time
+function seededRandom(seed: number): number {
+  const x = Math.sin(seed + 1) * 10000;
+  return x - Math.floor(x);
+}
+
+// ─── Warm background gradient ─────────────────────────────────────────────────
+
+const WarmBackground: React.FC<{ warmth: number }> = ({ warmth }) => {
+  // warmth 0→1: creamy beige to deeper peach
+  const topR = Math.round(interpolate(warmth, [0, 1], [253, 255]));
+  const topG = Math.round(interpolate(warmth, [0, 1], [248, 235]));
+  const topB = Math.round(interpolate(warmth, [0, 1], [240, 210]));
+  const botR = Math.round(interpolate(warmth, [0, 1], [255, 255]));
+  const botG = Math.round(interpolate(warmth, [0, 1], [240, 210]));
+  const botB = Math.round(interpolate(warmth, [0, 1], [230, 185]));
 
   return (
     <AbsoluteFill
       style={{
-        justifyContent: "center",
-        alignItems: "flex-start",
-        paddingLeft: 64,
-        paddingRight: 80,
-        paddingTop: 280,
+        background: `linear-gradient(165deg, rgb(${topR},${topG},${topB}) 0%, rgb(${botR},${botG},${botB}) 100%)`,
+      }}
+    />
+  );
+};
+
+// ─── Single notification toast ────────────────────────────────────────────────
+
+const Toast: React.FC<{
+  entry: NotificationEntry;
+  slideProgress: number; // 0→1 spring
+  stackOffsetY: number;  // px shift upward as new toasts arrive
+  opacity: number;
+}> = ({ entry, slideProgress, stackOffsetY, opacity }) => {
+  const translateX = interpolate(slideProgress, [0, 1], [620, 40]);
+  const translateY = -stackOffsetY;
+
+  return (
+    <div
+      style={{
+        position: "absolute",
+        right: 0,
+        bottom: 0,
+        transform: `translateX(${translateX}px) translateY(${translateY}px)`,
+        opacity,
+        width: 680,
+        pointerEvents: "none",
       }}
     >
-      {/* Verified purchase badge */}
+      {/* Card body — frosted appearance via layering */}
       <div
         style={{
-          position: "absolute",
-          top: 180,
-          right: 52,
-          background: "rgba(255,255,255,0.12)",
-          border: "1px solid rgba(255,255,255,0.25)",
+          background: "rgba(255, 255, 255, 0.88)",
           borderRadius: 20,
-          padding: "8px 16px",
+          padding: "18px 20px",
           display: "flex",
           alignItems: "center",
-          gap: 6,
-          opacity: interpolate(frame, [0, 20], [0, 1], {
-            extrapolateRight: "clamp",
-          }),
+          gap: 16,
+          boxShadow:
+            "0 8px 32px rgba(0,0,0,0.10), 0 2px 8px rgba(0,0,0,0.06)",
+          borderLeft: `5px solid ${entry.accentColor}`,
+          // Inner white layer to approximate frosted glass on warm background
+          borderTop: "1px solid rgba(255,255,255,0.9)",
+          borderRight: "1px solid rgba(255,255,255,0.9)",
+          borderBottom: "1px solid rgba(255,255,255,0.9)",
         }}
       >
-        <span style={{ color: "#4ADE80", fontSize: 14 }}>✓</span>
-        <span
+        {/* Avatar circle */}
+        <div
           style={{
-            color: "rgba(255,255,255,0.85)",
-            fontSize: 13,
-            fontFamily,
-            fontWeight: 600,
-            letterSpacing: 0.5,
+            width: 52,
+            height: 52,
+            borderRadius: "50%",
+            background: `${entry.accentColor}22`,
+            border: `2px solid ${entry.accentColor}55`,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexShrink: 0,
           }}
         >
-          verified purchase
-        </span>
-      </div>
+          <span
+            style={{
+              fontFamily,
+              fontWeight: 700,
+              fontSize: 22,
+              color: entry.accentColor,
+              lineHeight: 1,
+            }}
+          >
+            {entry.avatar}
+          </span>
+        </div>
 
-      {/* Hook words — word-by-word spring entrance */}
+        {/* Text block */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div
+            style={{
+              fontFamily,
+              fontWeight: 700,
+              fontSize: 26,
+              color: "#1C1410",
+              lineHeight: 1.3,
+              letterSpacing: -0.3,
+            }}
+          >
+            {entry.text}
+          </div>
+          <div
+            style={{
+              fontFamily,
+              fontWeight: 400,
+              fontSize: 20,
+              color: "#9B8E85",
+              marginTop: 4,
+              letterSpacing: 0.1,
+            }}
+          >
+            {entry.time}
+          </div>
+        </div>
+
+        {/* App icon dot — iOS notification feel */}
+        <div
+          style={{
+            width: 10,
+            height: 10,
+            borderRadius: "50%",
+            background: entry.accentColor,
+            flexShrink: 0,
+            alignSelf: "flex-start",
+            marginTop: 6,
+          }}
+        />
+      </div>
+    </div>
+  );
+};
+
+// ─── Scene 1: Product reveal ──────────────────────────────────────────────────
+
+const ProductRevealScene: React.FC<{
+  productImage: string;
+  productName: string;
+  rating: number;
+  sceneFrame: number;
+}> = ({ productImage, productName, rating, sceneFrame }) => {
+  const { fps } = useVideoConfig();
+
+  const imageEnter = spring({
+    frame: sceneFrame,
+    fps,
+    config: { damping: 18, stiffness: 120, mass: 1.1 },
+  });
+
+  const nameEnter = spring({
+    frame: sceneFrame - 18,
+    fps,
+    config: { damping: 16, stiffness: 150 },
+  });
+
+  const ratingEnter = spring({
+    frame: sceneFrame - 32,
+    fps,
+    config: { damping: 14, stiffness: 130 },
+  });
+
+  const imageScale = interpolate(imageEnter, [0, 1], [0.75, 1]);
+  const imageOpacity = interpolate(imageEnter, [0, 0.4, 1], [0, 0.9, 1]);
+
+  // Subtle vertical float
+  const floatY = Math.sin(sceneFrame * 0.06) * 6;
+
+  const filledStars = Math.round(Math.min(5, Math.max(0, rating)));
+
+  return (
+    <AbsoluteFill
+      style={{
+        alignItems: "center",
+        justifyContent: "center",
+        flexDirection: "column",
+        gap: 0,
+      }}
+    >
+      {/* Product on pedestal */}
       <div
         style={{
           display: "flex",
-          flexWrap: "wrap",
-          gap: "0 14px",
-          rowGap: 8,
+          flexDirection: "column",
+          alignItems: "center",
+          gap: 36,
+          transform: `translateY(${floatY}px)`,
         }}
       >
-        {words.map((word, i) => {
-          const wordStart = i * 7;
-          const progress = spring({
-            frame: frame - wordStart,
-            fps,
-            config: { damping: 14, stiffness: 180, mass: 0.8 },
-          });
+        {/* Circular shadow pedestal */}
+        <div style={{ position: "relative" }}>
+          <div
+            style={{
+              position: "absolute",
+              bottom: -20,
+              left: "50%",
+              transform: "translateX(-50%)",
+              width: 360,
+              height: 60,
+              borderRadius: "50%",
+              background:
+                "radial-gradient(ellipse, rgba(180,120,60,0.22) 0%, transparent 70%)",
+              opacity: imageEnter,
+            }}
+          />
+          <div
+            style={{
+              width: 420,
+              height: 420,
+              borderRadius: "50%",
+              overflow: "hidden",
+              boxShadow:
+                "0 30px 80px rgba(180,100,40,0.18), 0 8px 24px rgba(0,0,0,0.08)",
+              transform: `scale(${imageScale})`,
+              opacity: imageOpacity,
+              border: "4px solid rgba(255,255,255,0.85)",
+            }}
+          >
+            <Img
+              src={staticFile(productImage)}
+              style={{ width: "100%", height: "100%", objectFit: "cover" }}
+            />
+          </div>
+        </div>
 
-          const translateY = interpolate(progress, [0, 1], [30, 0]);
-          const opacity = interpolate(progress, [0, 1], [0, 1]);
+        {/* Product name */}
+        <div
+          style={{
+            textAlign: "center",
+            transform: `translateY(${interpolate(nameEnter, [0, 1], [20, 0])}px)`,
+            opacity: nameEnter,
+          }}
+        >
+          <span
+            style={{
+              fontFamily,
+              fontWeight: 700,
+              fontSize: 52,
+              color: "#2D1E0F",
+              letterSpacing: -1,
+              lineHeight: 1,
+            }}
+          >
+            {productName}
+          </span>
+        </div>
 
-          return (
-            <span
-              key={i}
-              style={{
-                fontFamily,
-                fontWeight: 700,
-                fontSize: 72,
-                color: "#FFFFFF",
-                lineHeight: 1.1,
-                transform: `translateY(${translateY}px)`,
-                opacity,
-                textShadow: "0 4px 24px rgba(0,0,0,0.6)",
-                display: "inline-block",
-              }}
-            >
-              {word}
-            </span>
-          );
-        })}
+        {/* Star rating */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            transform: `scale(${interpolate(ratingEnter, [0, 1], [0.7, 1])})`,
+            opacity: ratingEnter,
+          }}
+        >
+          <div style={{ display: "flex", gap: 4 }}>
+            {Array.from({ length: 5 }, (_, i) => (
+              <span
+                key={i}
+                style={{
+                  fontSize: 38,
+                  color: i < filledStars ? "#F59E0B" : "#E5D5C5",
+                  lineHeight: 1,
+                  filter:
+                    i < filledStars
+                      ? "drop-shadow(0 1px 4px rgba(245,158,11,0.45))"
+                      : "none",
+                }}
+              >
+                ★
+              </span>
+            ))}
+          </div>
+          <span
+            style={{
+              fontFamily,
+              fontWeight: 400,
+              fontSize: 28,
+              color: "#8A6F5A",
+              letterSpacing: 0.2,
+            }}
+          >
+            {rating.toFixed(1)}
+          </span>
+        </div>
       </div>
     </AbsoluteFill>
   );
 };
 
-// ─── Scene 2: Testimonial Lines ───────────────────────────────────────────────
+// ─── Scene 2 + 3: Notification cascade ───────────────────────────────────────
+// Handles both first notification (Scene 2) and full cascade (Scene 3)
+// cascadeFrame is relative to SCENE_2_START
 
-const TestimonialScene: React.FC<{
-  lines: string[];
+const CascadeScene: React.FC<{
   productImage: string;
-  sceneFrame: number;
-}> = ({ lines, productImage, sceneFrame }) => {
-  const { fps, width } = useVideoConfig();
+  productName: string;
+  cascadeFrame: number;
+}> = ({ productImage, productName, cascadeFrame }) => {
+  const { fps } = useVideoConfig();
 
-  // Gentle vertical bob for the product image
-  const bobY = Math.sin(sceneFrame * 0.05) * 8;
+  // Each notification slides in 25 frames after the previous
+  const TOAST_INTERVAL = 25;
+  // First toast starts at cascadeFrame 0 (which is SCENE_2_START)
+  // Rest follow every 25 frames from SCENE_3_START (= cascadeFrame 60)
+  const toastStartFrames = [
+    0,   // Scene 2: first
+    60,  // Scene 3 opens
+    85,
+    110,
+    135,
+    160,
+    185,
+    210,
+  ];
 
-  const productEnter = spring({
-    frame: sceneFrame,
+  // Product scales down into corner as notifications accumulate
+  const productShrink = spring({
+    frame: cascadeFrame - 60,
     fps,
-    config: { damping: 18, stiffness: 120 },
+    config: { damping: 20, stiffness: 80 },
+  });
+  const productScale = interpolate(productShrink, [0, 1], [1, 0.55]);
+  const productY = interpolate(productShrink, [0, 1], [0, -340]);
+  const productX = interpolate(productShrink, [0, 1], [0, 0]);
+
+  // Background warmth increases with density
+  const warmthRamp = interpolate(cascadeFrame, [60, 200], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
   });
 
   return (
-    <AbsoluteFill
-      style={{
-        justifyContent: "center",
-        alignItems: "flex-start",
-        paddingLeft: 60,
-        paddingRight: 60,
-        paddingTop: 220,
-      }}
-    >
-      {/* Product image — small, floating in top-right corner */}
+    <AbsoluteFill>
+      {/* Warm overlay that builds up */}
+      <AbsoluteFill
+        style={{
+          background: `linear-gradient(165deg, rgba(255,230,180,${warmthRamp * 0.25}) 0%, rgba(255,200,140,${warmthRamp * 0.18}) 100%)`,
+          pointerEvents: "none",
+        }}
+      />
+
+      {/* Product image — shrinks to top as toasts accumulate */}
       <div
         style={{
           position: "absolute",
-          top: 140,
-          right: 40,
-          width: 200,
-          height: 200,
-          borderRadius: 20,
+          top: "50%",
+          left: "50%",
+          transform: `translate(-50%, calc(-50% + ${productY}px)) scale(${productScale})`,
+          width: 420,
+          height: 420,
+          borderRadius: "50%",
           overflow: "hidden",
-          boxShadow: "0 20px 60px rgba(0,0,0,0.5)",
-          transform: `translateY(${bobY}px) scale(${interpolate(
-            productEnter,
-            [0, 1],
-            [0.6, 1]
-          )})`,
-          opacity: productEnter,
-          border: "2px solid rgba(255,255,255,0.15)",
+          boxShadow:
+            "0 30px 80px rgba(180,100,40,0.18), 0 8px 24px rgba(0,0,0,0.08)",
+          border: "4px solid rgba(255,255,255,0.85)",
         }}
       >
         <Img
@@ -227,57 +510,79 @@ const TestimonialScene: React.FC<{
         />
       </div>
 
-      {/* Testimonial lines */}
+      {/* Product label — fades as product shrinks */}
       <div
         style={{
-          display: "flex",
-          flexDirection: "column",
-          gap: 24,
-          maxWidth: width - 140,
+          position: "absolute",
+          top: "50%",
+          left: "50%",
+          transform: `translate(-50%, calc(230px + ${productY}px)) scale(${productScale})`,
+          opacity: interpolate(productShrink, [0, 0.6], [1, 0], {
+            extrapolateRight: "clamp",
+          }),
+          whiteSpace: "nowrap",
         }}
       >
-        {lines.map((line, i) => {
-          const lineStart = i * LINE_DURATION;
-          const lineProgress = spring({
-            frame: sceneFrame - lineStart,
+        <span
+          style={{
+            fontFamily,
+            fontWeight: 700,
+            fontSize: 52,
+            color: "#2D1E0F",
+            letterSpacing: -1,
+          }}
+        >
+          {productName}
+        </span>
+      </div>
+
+      {/* Toast stack — positioned at bottom right, each pushed up by later ones */}
+      <div
+        style={{
+          position: "absolute",
+          right: 40,
+          bottom: 200,
+          width: 680,
+        }}
+      >
+        {toastStartFrames.map((startFrame, index) => {
+          const notif = NOTIFICATIONS[index];
+          if (!notif) return null;
+
+          const relFrame = cascadeFrame - startFrame;
+
+          const slideProgress = spring({
+            frame: relFrame,
             fps,
-            config: { damping: 16, stiffness: 140 },
+            config: { damping: 12, stiffness: 180, mass: 0.85 },
           });
 
-          const isActive = sceneFrame >= lineStart;
-          const isFaded =
-            sceneFrame > lineStart + LINE_DURATION && i < lines.length - 1;
+          // Each toast visible from when it enters
+          const isVisible = cascadeFrame >= startFrame - 5;
+          if (!isVisible) return null;
 
-          const translateY = interpolate(lineProgress, [0, 1], [40, 0]);
-          const opacity = isActive
-            ? isFaded
-              ? 0.45
-              : interpolate(lineProgress, [0, 1], [0, 1])
-            : 0;
+          // How many toasts came after this one (push it upward)
+          const toastsAfter = toastStartFrames.filter(
+            (f) => f > startFrame && cascadeFrame >= f
+          ).length;
+
+          // Each toast card is ~100px tall including gap
+          const TOAST_HEIGHT = 108;
+          const stackOffsetY = toastsAfter * TOAST_HEIGHT;
+
+          // Older toasts fade slightly for depth
+          const ageFade = interpolate(toastsAfter, [0, 4, 7], [1, 0.75, 0.45], {
+            extrapolateRight: "clamp",
+          });
 
           return (
-            <div
-              key={i}
-              style={{
-                transform: `translateY(${translateY}px)`,
-                opacity,
-                transition: "opacity 0.3s",
-              }}
-            >
-              <span
-                style={{
-                  fontFamily,
-                  fontWeight: 700,
-                  fontSize: 52,
-                  color: "#FFFFFF",
-                  lineHeight: 1.2,
-                  textShadow: "0 2px 16px rgba(0,0,0,0.7)",
-                  display: "block",
-                }}
-              >
-                {line}
-              </span>
-            </div>
+            <Toast
+              key={notif.id}
+              entry={notif}
+              slideProgress={slideProgress}
+              stackOffsetY={stackOffsetY}
+              opacity={ageFade}
+            />
           );
         })}
       </div>
@@ -285,51 +590,186 @@ const TestimonialScene: React.FC<{
   );
 };
 
-// ─── Scene 3: Product + Rating ────────────────────────────────────────────────
+// ─── Scene 4: CTA convergence ─────────────────────────────────────────────────
 
-const ProductRatingScene: React.FC<{
+const CTAScene: React.FC<{
   productImage: string;
   productName: string;
-  rating: number;
-  reviewerName: string;
+  ctaText: string;
+  brandColor: string;
   sceneFrame: number;
-}> = ({ productImage, productName, rating, reviewerName, sceneFrame }) => {
+}> = ({ productImage, productName, ctaText, brandColor, sceneFrame }) => {
   const { fps } = useVideoConfig();
 
-  const imageScale = spring({
+  // Trust bar slides down from top
+  const trustBarEnter = spring({
     frame: sceneFrame,
     fps,
-    config: { damping: 20, stiffness: 100, mass: 1.2 },
+    config: { damping: 18, stiffness: 160 },
   });
 
-  const textEnter = spring({
-    frame: sceneFrame - 15,
+  // Product surges back to prominence
+  const productEnter = spring({
+    frame: sceneFrame - 10,
     fps,
-    config: { damping: 18, stiffness: 140 },
+    config: { damping: 10, stiffness: 120, mass: 1.2 },
   });
 
-  const filledStars = Math.round(Math.min(5, Math.max(0, rating)));
+  // Price + CTA rise from bottom
+  const ctaEnter = spring({
+    frame: sceneFrame - 30,
+    fps,
+    config: { damping: 12, stiffness: 150 },
+  });
+
+  // Sub-CTA text
+  const subEnter = spring({
+    frame: sceneFrame - 50,
+    fps,
+    config: { damping: 14, stiffness: 130 },
+  });
+
+  const trustBarY = interpolate(trustBarEnter, [0, 1], [-80, 0]);
+  const productScale = interpolate(productEnter, [0, 1], [0.4, 1]);
+  const ctaY = interpolate(ctaEnter, [0, 1], [60, 0]);
+
+  // Confetti dots — deterministic positions seeded per index
+  const CONFETTI_COUNT = 28;
+  const confettiColors = [
+    "#F97316", "#FBBF24", "#34D399", "#F87171",
+    "#A78BFA", "#38BDF8", "#F472B6", "#FB923C",
+  ];
+  const confettiProgress = interpolate(sceneFrame, [40, 90], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
 
   return (
     <AbsoluteFill
       style={{
-        justifyContent: "center",
         alignItems: "center",
         flexDirection: "column",
-        gap: 32,
       }}
     >
-      {/* Product image — center stage */}
+      {/* Confetti dots drifting down */}
+      {Array.from({ length: CONFETTI_COUNT }, (_, i) => {
+        const startX = seededRandom(i * 7) * 1080;
+        const drift = (seededRandom(i * 13) - 0.5) * 120;
+        const speed = 0.6 + seededRandom(i * 3) * 0.8;
+        const size = 8 + seededRandom(i * 17) * 14;
+        const dotColor = confettiColors[i % confettiColors.length];
+        const delay = seededRandom(i * 5) * 60; // frame delay
+        const dotProgress = interpolate(
+          sceneFrame,
+          [delay, delay + 80],
+          [0, 1],
+          { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
+        );
+        const dotY = dotProgress * 1000 * speed;
+        const dotX = startX + drift * dotProgress;
+        const dotOpacity = interpolate(
+          dotProgress,
+          [0, 0.1, 0.8, 1],
+          [0, 0.8, 0.7, 0]
+        );
+
+        return (
+          <div
+            key={i}
+            style={{
+              position: "absolute",
+              top: -20,
+              left: dotX,
+              width: size,
+              height: size,
+              borderRadius: "50%",
+              background: dotColor,
+              transform: `translateY(${dotY}px)`,
+              opacity: dotOpacity * confettiProgress,
+              pointerEvents: "none",
+            }}
+          />
+        );
+      })}
+
+      {/* Trust bar — slides in from top */}
       <div
         style={{
-          width: 420,
-          height: 420,
-          borderRadius: 28,
+          width: "100%",
+          paddingTop: 72,
+          paddingBottom: 24,
+          paddingLeft: 40,
+          paddingRight: 40,
+          transform: `translateY(${trustBarY}px)`,
+          opacity: trustBarEnter,
+          display: "flex",
+          justifyContent: "center",
+        }}
+      >
+        <div
+          style={{
+            background: "rgba(255,255,255,0.82)",
+            borderRadius: 60,
+            paddingTop: 18,
+            paddingBottom: 18,
+            paddingLeft: 40,
+            paddingRight: 40,
+            display: "flex",
+            alignItems: "center",
+            gap: 24,
+            boxShadow:
+              "0 4px 24px rgba(180,100,40,0.12), 0 1px 4px rgba(0,0,0,0.06)",
+            border: "1.5px solid rgba(255,255,255,0.9)",
+          }}
+        >
+          <span style={{ fontFamily, fontWeight: 700, fontSize: 26, color: "#F59E0B" }}>
+            ★ 4.9
+          </span>
+          <div
+            style={{
+              width: 1,
+              height: 28,
+              background: "rgba(180,140,100,0.3)",
+            }}
+          />
+          <span style={{ fontFamily, fontWeight: 400, fontSize: 24, color: "#6B5140" }}>
+            2,847 reviews
+          </span>
+          <div
+            style={{
+              width: 1,
+              height: 28,
+              background: "rgba(180,140,100,0.3)",
+            }}
+          />
+          <span
+            style={{
+              fontFamily,
+              fontWeight: 700,
+              fontSize: 22,
+              color: "#EF4444",
+              letterSpacing: 0.5,
+              textTransform: "uppercase" as const,
+            }}
+          >
+            Trending
+          </span>
+        </div>
+      </div>
+
+      {/* Product image — surges to center */}
+      <div
+        style={{
+          width: 460,
+          height: 460,
+          borderRadius: "50%",
           overflow: "hidden",
-          boxShadow: "0 40px 100px rgba(0,0,0,0.6)",
-          transform: `scale(${interpolate(imageScale, [0, 1], [0.5, 1])})`,
-          opacity: imageScale,
-          border: "3px solid rgba(255,255,255,0.2)",
+          boxShadow:
+            "0 40px 100px rgba(180,100,40,0.22), 0 10px 30px rgba(0,0,0,0.10)",
+          transform: `scale(${productScale})`,
+          opacity: productEnter,
+          border: "5px solid rgba(255,255,255,0.9)",
+          marginTop: 24,
         }}
       >
         <Img
@@ -341,187 +781,20 @@ const ProductRatingScene: React.FC<{
       {/* Product name */}
       <div
         style={{
-          transform: `translateY(${interpolate(textEnter, [0, 1], [24, 0])}px)`,
-          opacity: textEnter,
-          textAlign: "center",
-          paddingLeft: 48, paddingRight: 48,
+          marginTop: 28,
+          opacity: interpolate(productEnter, [0, 0.6], [0, 1], {
+            extrapolateRight: "clamp",
+          }),
+          transform: `translateY(${interpolate(productEnter, [0, 1], [16, 0])}px)`,
         }}
       >
         <span
           style={{
             fontFamily,
             fontWeight: 700,
-            fontSize: 44,
-            color: "#FFFFFF",
-            textShadow: "0 2px 20px rgba(0,0,0,0.5)",
-            display: "block",
-          }}
-        >
-          {productName}
-        </span>
-      </div>
-
-      {/* Star rating */}
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          gap: 8,
-          opacity: interpolate(sceneFrame, [30, 55], [0, 1], {
-            extrapolateRight: "clamp",
-          }),
-        }}
-      >
-        <div style={{ display: "flex", gap: 6 }}>
-          {Array.from({ length: 5 }, (_, i) => {
-            // Each star animates in with a staggered delay
-            const starProgress = interpolate(
-              sceneFrame,
-              [25 + i * 8, 38 + i * 8],
-              [0, 1],
-              {
-                extrapolateLeft: "clamp",
-                extrapolateRight: "clamp",
-                easing: Easing.out(Easing.back(2)),
-              }
-            );
-
-            const isFilled = i < filledStars;
-
-            return (
-              <span
-                key={i}
-                style={{
-                  fontSize: 52,
-                  color: isFilled ? "#FBBF24" : "rgba(255,255,255,0.2)",
-                  transform: `scale(${starProgress})`,
-                  display: "inline-block",
-                  filter: isFilled
-                    ? "drop-shadow(0 0 8px rgba(251,191,36,0.6))"
-                    : "none",
-                }}
-              >
-                ★
-              </span>
-            );
-          })}
-        </div>
-
-        <span
-          style={{
-            fontFamily,
-            fontWeight: 600,
-            fontSize: 26,
-            color: "rgba(255,255,255,0.7)",
-            letterSpacing: 0.5,
-          }}
-        >
-          — {reviewerName}
-        </span>
-      </div>
-    </AbsoluteFill>
-  );
-};
-
-// ─── Scene 4: CTA ─────────────────────────────────────────────────────────────
-
-const CTAScene: React.FC<{
-  ctaText: string;
-  brandColor: string;
-  productImage: string;
-  productName: string;
-  sceneFrame: number;
-}> = ({ ctaText, brandColor, productImage, productName, sceneFrame }) => {
-  const { fps } = useVideoConfig();
-
-  const urgencyEnter = spring({
-    frame: sceneFrame,
-    fps,
-    config: { damping: 16, stiffness: 160 },
-  });
-
-  const buttonEnter = spring({
-    frame: sceneFrame - 20,
-    fps,
-    config: { damping: 10, stiffness: 200, mass: 0.9 },
-  });
-
-  const arrowEnter = spring({
-    frame: sceneFrame - 40,
-    fps,
-    config: { damping: 14, stiffness: 150 },
-  });
-
-  // Arrow pulses subtly on loop
-  const arrowPulse = interpolate(
-    Math.sin(sceneFrame * 0.15),
-    [-1, 1],
-    [0, 10]
-  );
-
-  return (
-    <AbsoluteFill
-      style={{
-        justifyContent: "flex-end",
-        alignItems: "center",
-        flexDirection: "column",
-        paddingBottom: 140,
-        gap: 28,
-      }}
-    >
-      {/* Small product thumbnail in corner */}
-      <div
-        style={{
-          position: "absolute",
-          top: 120,
-          right: 44,
-          width: 130,
-          height: 130,
-          borderRadius: 16,
-          overflow: "hidden",
-          border: "2px solid rgba(255,255,255,0.2)",
-          boxShadow: "0 12px 40px rgba(0,0,0,0.4)",
-          opacity: interpolate(sceneFrame, [0, 20], [0, 1], {
-            extrapolateRight: "clamp",
-          }),
-        }}
-      >
-        <Img
-          src={staticFile(productImage)}
-          style={{ width: "100%", height: "100%", objectFit: "cover" }}
-        />
-      </div>
-
-      {/* Urgency text */}
-      <div
-        style={{
-          transform: `translateY(${interpolate(urgencyEnter, [0, 1], [30, 0])}px)`,
-          opacity: urgencyEnter,
-          textAlign: "center",
-        }}
-      >
-        <span
-          style={{
-            fontFamily,
-            fontWeight: 700,
-            fontSize: 48,
-            color: "#FFFFFF",
-            textShadow: "0 2px 20px rgba(0,0,0,0.6)",
-            display: "block",
-            lineHeight: 1.15,
-          }}
-        >
-          Don&apos;t sleep on this.
-        </span>
-        <span
-          style={{
-            fontFamily,
-            fontWeight: 600,
-            fontSize: 28,
-            color: "rgba(255,255,255,0.65)",
-            display: "block",
-            marginTop: 8,
+            fontSize: 46,
+            color: "#2D1E0F",
+            letterSpacing: -1,
           }}
         >
           {productName}
@@ -531,59 +804,59 @@ const CTAScene: React.FC<{
       {/* CTA button */}
       <div
         style={{
-          transform: `scale(${buttonEnter})`,
-          opacity: buttonEnter,
+          marginTop: 44,
+          transform: `translateY(${ctaY}px)`,
+          opacity: ctaEnter,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          gap: 20,
         }}
       >
         <div
           style={{
             background: brandColor,
-            borderRadius: 60,
-            paddingTop: 22,
-            paddingBottom: 22,
-            paddingLeft: 56,
-            paddingRight: 56,
-            boxShadow: `0 16px 48px ${brandColor}66`,
+            borderRadius: 72,
+            paddingTop: 28,
+            paddingBottom: 28,
+            paddingLeft: 80,
+            paddingRight: 80,
+            boxShadow: `0 20px 56px ${brandColor}55`,
           }}
         >
           <span
             style={{
               fontFamily,
               fontWeight: 700,
-              fontSize: 36,
+              fontSize: 38,
               color: "#FFFFFF",
-              letterSpacing: 0.5,
+              letterSpacing: 0.3,
             }}
           >
             {ctaText}
           </span>
         </div>
-      </div>
 
-      {/* Swipe up arrow */}
-      <div
-        style={{
-          opacity: interpolate(arrowEnter, [0, 1], [0, 0.8]),
-          transform: `translateY(${-arrowPulse}px)`,
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          gap: 4,
-        }}
-      >
-        <span style={{ fontSize: 32 }}>↑</span>
-        <span
+        {/* Social proof sub-line */}
+        <div
           style={{
-            fontFamily,
-            fontWeight: 600,
-            fontSize: 20,
-            color: "rgba(255,255,255,0.7)",
-            letterSpacing: 1.5,
-            textTransform: "uppercase",
+            transform: `translateY(${interpolate(subEnter, [0, 1], [16, 0])}px)`,
+            opacity: subEnter,
+            textAlign: "center",
           }}
         >
-          Swipe Up
-        </span>
+          <span
+            style={{
+              fontFamily,
+              fontWeight: 400,
+              fontSize: 24,
+              color: "#9B8070",
+              letterSpacing: 0.2,
+            }}
+          >
+            Join 12,847+ happy customers
+          </span>
+        </div>
       </div>
     </AbsoluteFill>
   );
@@ -592,125 +865,95 @@ const CTAScene: React.FC<{
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export const UGCTestimonial: React.FC<UGCTestimonialProps> = ({
-  hookText,
-  testimonialLines,
   productName,
   productImage,
   rating,
-  reviewerName,
   ctaText,
   brandColor,
 }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
-  // ── Scene visibility ────────────────────────────────────────────────────────
+  // ── Background warmth drives through the whole video ────────────────────────
+  // Scene 1: neutral creamy. Scene 3+: deeper peach as social proof density builds.
 
-  const scene1Opacity = interpolate(frame, [80, 90], [1, 0], {
+  const warmth = interpolate(
+    frame,
+    [SCENE_1_START, SCENE_3_START, SCENE_3_START + 100, SCENE_4_START],
+    [0, 0, 0.7, 1],
+    { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
+  );
+
+  // ── Scene-local frame counters ───────────────────────────────────────────────
+
+  const scene1Frame = frame - SCENE_1_START;
+  const scene2Frame = frame - SCENE_2_START; // cascade scene uses this too
+  const scene4Frame = frame - SCENE_4_START;
+
+  // ── Fade between scenes ──────────────────────────────────────────────────────
+
+  // Scene 1 fades out as scene 2 opens
+  const scene1Opacity = interpolate(frame, [SCENE_2_START - 8, SCENE_2_START + 8], [1, 0], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
 
-  const scene2Opacity = interpolate(
+  // Scene 2+3 (cascade) fades out as CTA opens
+  const cascadeOpacity = interpolate(
     frame,
-    [SCENE_2_START, SCENE_2_START + 15, SCENE_3_START - 10, SCENE_3_START],
-    [0, 1, 1, 0],
+    [SCENE_4_START - 15, SCENE_4_START + 10],
+    [1, 0],
     { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
   );
 
-  const scene3Opacity = interpolate(
-    frame,
-    [SCENE_3_START, SCENE_3_START + 15, SCENE_4_START - 10, SCENE_4_START],
-    [0, 1, 1, 0],
-    { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
-  );
-
+  // Scene 4 fades in
   const scene4Opacity = interpolate(
     frame,
-    [SCENE_4_START, SCENE_4_START + 20, TOTAL_FRAMES - 5, TOTAL_FRAMES],
-    [0, 1, 1, 1],
+    [SCENE_4_START - 5, SCENE_4_START + 20],
+    [0, 1],
     { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
   );
-
-  // ── Background color shift ──────────────────────────────────────────────────
-  // Scenes 1-2: near-black (#0e0e0e). Scene 3+: slightly warmer (#1a1208).
-
-  const bgR = Math.round(
-    interpolate(frame, [SCENE_3_START, SCENE_3_START + 40], [14, 26], {
-      extrapolateLeft: "clamp",
-      extrapolateRight: "clamp",
-    })
-  );
-  const bgG = Math.round(
-    interpolate(frame, [SCENE_3_START, SCENE_3_START + 40], [14, 18], {
-      extrapolateLeft: "clamp",
-      extrapolateRight: "clamp",
-    })
-  );
-  const bgB = Math.round(
-    interpolate(frame, [SCENE_3_START, SCENE_3_START + 40], [14, 8], {
-      extrapolateLeft: "clamp",
-      extrapolateRight: "clamp",
-    })
-  );
-
-  const backgroundColor = `rgb(${bgR},${bgG},${bgB})`;
-
-  // ── Grain opacity — lightest in CTA scene ──────────────────────────────────
-
-  const grainOpacity = interpolate(
-    frame,
-    [0, 10, SCENE_4_START, TOTAL_FRAMES],
-    [0, 0.08, 0.08, 0.04],
-    { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
-  );
-
-  // ── Scene-local frame counters ─────────────────────────────────────────────
-
-  const scene2Frame = frame - SCENE_2_START;
-  const scene3Frame = frame - SCENE_3_START;
-  const scene4Frame = frame - SCENE_4_START;
 
   return (
-    <AbsoluteFill style={{ backgroundColor, fontFamily }}>
-      {/* ── Scene 1: Hook ─────────────────────────────────────── */}
-      <AbsoluteFill style={{ opacity: scene1Opacity }}>
-        <HookScene hookText={hookText} />
-      </AbsoluteFill>
+    <AbsoluteFill style={{ fontFamily, overflow: "hidden" }}>
+      {/* ── Warm background — always present ────────────────────── */}
+      <WarmBackground warmth={warmth} />
 
-      {/* ── Scene 2: Testimonial ──────────────────────────────── */}
-      <AbsoluteFill style={{ opacity: scene2Opacity }}>
-        <TestimonialScene
-          lines={testimonialLines}
-          productImage={productImage}
-          sceneFrame={scene2Frame}
-        />
-      </AbsoluteFill>
+      {/* ── Scene 1: Product reveal ──────────────────────────────── */}
+      {frame < SCENE_2_START + 8 && (
+        <AbsoluteFill style={{ opacity: scene1Opacity }}>
+          <ProductRevealScene
+            productImage={productImage}
+            productName={productName}
+            rating={rating}
+            sceneFrame={scene1Frame}
+          />
+        </AbsoluteFill>
+      )}
 
-      {/* ── Scene 3: Product + Rating ─────────────────────────── */}
-      <AbsoluteFill style={{ opacity: scene3Opacity }}>
-        <ProductRatingScene
-          productImage={productImage}
-          productName={productName}
-          rating={rating}
-          reviewerName={reviewerName}
-          sceneFrame={scene3Frame}
-        />
-      </AbsoluteFill>
+      {/* ── Scenes 2+3: Notification cascade ────────────────────── */}
+      {frame >= SCENE_2_START - 5 && frame < SCENE_4_START + 10 && (
+        <AbsoluteFill style={{ opacity: cascadeOpacity }}>
+          <CascadeScene
+            productImage={productImage}
+            productName={productName}
+            cascadeFrame={scene2Frame}
+          />
+        </AbsoluteFill>
+      )}
 
-      {/* ── Scene 4: CTA ──────────────────────────────────────── */}
-      <AbsoluteFill style={{ opacity: scene4Opacity }}>
-        <CTAScene
-          ctaText={ctaText}
-          brandColor={brandColor}
-          productImage={productImage}
-          productName={productName}
-          sceneFrame={scene4Frame}
-        />
-      </AbsoluteFill>
-
-      {/* ── Grain overlay — sits above all scenes ─────────────── */}
-      <GrainLayer opacity={grainOpacity} />
+      {/* ── Scene 4: CTA convergence ─────────────────────────────── */}
+      {frame >= SCENE_4_START - 5 && (
+        <AbsoluteFill style={{ opacity: scene4Opacity }}>
+          <CTAScene
+            productImage={productImage}
+            productName={productName}
+            ctaText={ctaText}
+            brandColor={brandColor}
+            sceneFrame={scene4Frame}
+          />
+        </AbsoluteFill>
+      )}
     </AbsoluteFill>
   );
 };

@@ -3,22 +3,25 @@ import {
   AbsoluteFill,
   Img,
   interpolate,
+  Sequence,
   spring,
   staticFile,
   useCurrentFrame,
   useVideoConfig,
 } from "remotion";
-import { loadFont as loadSpaceGroteskBold } from "@remotion/google-fonts/SpaceGrotesk";
+import { loadFont } from "@remotion/google-fonts/Inter";
 import { z } from "zod";
 
 // ─── Font loading (module scope — required by Remotion) ───────────────────────
-const { fontFamily: spaceGroteskFamily } = loadSpaceGroteskBold();
+const { fontFamily: interFamily } = loadFont("normal", {
+  weights: ["400", "700"],
+});
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 export const CinematicRevealSchema = z.object({
   productName: z.string(),
   productImage: z.string(),
-  tagline: z.string(),
+  tagline: z.string(), // repurposed as the PROBLEM statement
   price: z.string(),
   brandColor: z.string(),
   accentColor: z.string(),
@@ -26,292 +29,571 @@ export const CinematicRevealSchema = z.object({
 
 type CinematicRevealProps = z.infer<typeof CinematicRevealSchema>;
 
-// ─── Constants ────────────────────────────────────────────────────────────────
-const TOTAL_FRAMES = 300;
+// ─── Scene boundaries (frames) ───────────────────────────────────────────────
+// Scene 1 — PROBLEM   : 0   → 75
+// Scene 2 — AGITATION : 75  → 150
+// Scene 3 — SOLUTION  : 150 → 270
+// Scene 4 — CLOSE     : 270 → 450 (capped to 300 via durationInFrames)
 const FPS = 30;
 
-// Scene boundaries
-const SWEEP_START = 0;
-const SWEEP_END = 60;
-const REVEAL_START = 45;
-const REVEAL_END = 150;
-const TEXT_START = 130;
-const TEXT_END = 220;
-const PRICE_START = 200;
-const PRICE_END = 300;
+// Feature callout labels shown in Scene 3
+const FEATURE_LABELS = ["Premium Quality", "Fast Results", "Proven Formula"];
 
-// Number of particles
-const PARTICLE_COUNT = 18;
+// ─── Scene 1: THE PROBLEM ─────────────────────────────────────────────────────
 
-// ─── Sub-components ───────────────────────────────────────────────────────────
+const ProblemScene: React.FC<{
+  tagline: string;
+  width: number;
+  height: number;
+}> = ({ tagline, width, height }) => {
+  const frame = useCurrentFrame(); // frame 0 within this Sequence
 
-/**
- * A single thin horizontal sweep line — the opening anticipation effect.
- */
-const SweepLine: React.FC<{ accentColor: string; width: number; height: number }> = ({
-  accentColor,
-  width,
-  height,
-}) => {
-  const frame = useCurrentFrame();
+  // Split the tagline into two roughly equal lines
+  const words = tagline.split(" ");
+  const mid = Math.ceil(words.length / 2);
+  const line1 = words.slice(0, mid).join(" ");
+  const line2 = words.slice(mid).join(" ");
 
-  // The line travels from left to right between frames 5 and 55
-  const progress = interpolate(frame, [5, 55], [0, 1], {
+  // Line 1: scale from 5x → 1x, dramatic overshoot (damping 6)
+  const line1Scale = spring({
+    frame,
+    fps: FPS,
+    config: { damping: 6, stiffness: 120, mass: 1 },
+    from: 5,
+    to: 1,
+  });
+  const line1Opacity = interpolate(frame, [0, 8], [0, 1], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
 
-  // Glow orb follows the same progress
-  const orbX = progress * width;
-  const orbOpacity = interpolate(frame, [SWEEP_START, 20, 45, SWEEP_END], [0, 1, 1, 0], {
+  // Line 2: slides up from +80px, starts at frame 20
+  const line2Y = spring({
+    frame: frame - 20,
+    fps: FPS,
+    config: { damping: 12, stiffness: 100, mass: 1 },
+    from: 80,
+    to: 0,
+  });
+  const line2Opacity = interpolate(frame, [20, 32], [0, 1], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
 
-  const lineOpacity = interpolate(frame, [SWEEP_START, 10, 50, SWEEP_END], [0, 0.9, 0.9, 0], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
+  // Red radial pulse — opacity oscillates
+  const pulseOpacity = 0.18 + Math.sin(frame / 10) * 0.08;
 
-  const lineY = height * 0.42;
-
-  return (
-    <>
-      {/* The sweep line */}
-      <div
-        style={{
-          position: "absolute",
-          top: lineY,
-          left: 0,
-          width: orbX,
-          height: 1,
-          background: `linear-gradient(to right, transparent, ${accentColor}cc, ${accentColor})`,
-          opacity: lineOpacity,
-        }}
-      />
-      {/* Trailing glow orb */}
-      <div
-        style={{
-          position: "absolute",
-          top: lineY - 20,
-          left: orbX - 20,
-          width: 40,
-          height: 40,
-          borderRadius: "50%",
-          background: accentColor,
-          opacity: orbOpacity * 0.7,
-          filter: "blur(18px)",
-        }}
-      />
-    </>
-  );
-};
-
-/**
- * Light rays rotating around the product centre.
- */
-const LightRays: React.FC<{
-  accentColor: string;
-  centerX: number;
-  centerY: number;
-  opacity: number;
-}> = ({ accentColor, centerX, centerY, opacity }) => {
-  const frame = useCurrentFrame();
-  const RAY_COUNT = 8;
-  const RAY_LENGTH = 520;
-
-  return (
-    <svg
-      style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%" }}
-      viewBox="0 0 1080 1920"
-    >
-      {Array.from({ length: RAY_COUNT }).map((_, i) => {
-        const baseAngle = (i / RAY_COUNT) * 360;
-        // Slow rotation — 1 full rotation every 10 seconds
-        const rotationDeg = baseAngle + (frame / (FPS * 10)) * 360;
-        const rad = (rotationDeg * Math.PI) / 180;
-        const x2 = centerX + Math.cos(rad) * RAY_LENGTH;
-        const y2 = centerY + Math.sin(rad) * RAY_LENGTH;
-        const rayOpacity = opacity * (i % 2 === 0 ? 0.12 : 0.06);
-
-        return (
-          <line
-            key={i}
-            x1={centerX}
-            y1={centerY}
-            x2={x2}
-            y2={y2}
-            stroke={accentColor}
-            strokeWidth={i % 2 === 0 ? 2 : 1}
-            strokeOpacity={rayOpacity}
-          />
-        );
-      })}
-    </svg>
-  );
-};
-
-/**
- * Deterministic floating particles — bokeh-like dots drifting upward.
- */
-const Particles: React.FC<{ accentColor: string; width: number; height: number }> = ({
-  accentColor,
-  width,
-  height,
-}) => {
-  const frame = useCurrentFrame();
-
-  // Particles become visible from frame 100 onwards
-  const globalOpacity = interpolate(frame, [100, 140], [0, 1], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
-
-  return (
-    <>
-      {Array.from({ length: PARTICLE_COUNT }).map((_, i) => {
-        // Deterministic seed per particle
-        const seedX = Math.sin(i * 73.19) * 0.5 + 0.5;
-        const seedY = Math.cos(i * 47.31) * 0.5 + 0.5;
-        const seedSize = Math.abs(Math.sin(i * 29.7)) * 2 + 1; // 1–3px
-        const seedSpeed = Math.abs(Math.sin(i * 61.3)) * 0.4 + 0.15; // 0.15–0.55 px/frame
-        const seedPhase = i * 23.7; // stagger start positions
-        const seedOpacity = Math.abs(Math.sin(i * 17.3)) * 0.4 + 0.2; // 0.2–0.6
-
-        // Horizontal drift using sin wave
-        const driftX = Math.sin((frame + seedPhase) / 40) * 12;
-
-        // Vertical position — wraps from bottom to top
-        const totalTravel = height + 40;
-        const rawY = height - ((frame * seedSpeed * 0.8 + seedY * totalTravel) % totalTravel);
-
-        const x = seedX * width + driftX;
-        const y = rawY;
-
-        // Subtle size pulse
-        const sizePulse = 1 + Math.sin((frame + seedPhase) / 25) * 0.15;
-        const size = seedSize * sizePulse;
-
-        return (
-          <div
-            key={i}
-            style={{
-              position: "absolute",
-              left: x,
-              top: y,
-              width: size,
-              height: size,
-              borderRadius: "50%",
-              background: accentColor,
-              opacity: globalOpacity * seedOpacity,
-              filter: `blur(${seedSize > 2 ? 1 : 0}px)`,
-            }}
-          />
-        );
-      })}
-    </>
-  );
-};
-
-/**
- * Animated gradient background — very dark, shifting slowly.
- */
-const AnimatedBackground: React.FC<{ brandColor: string }> = ({ brandColor }) => {
-  const frame = useCurrentFrame();
-
-  // Slowly shift the gradient angle
-  const gradientAngle = interpolate(frame, [0, TOTAL_FRAMES], [160, 200], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
-
-  // Pulse the midpoint opacity slightly
-  const midOpacity = interpolate(
-    Math.sin(frame / 60),
-    [-1, 1],
-    [0.06, 0.12]
-  );
+  // Pain indicator circles — pulse at offset phases
+  const dot1Scale = 0.85 + Math.sin(frame / 8) * 0.15;
+  const dot2Scale = 0.85 + Math.sin(frame / 8 + 2.1) * 0.15;
+  const dot3Scale = 0.85 + Math.sin(frame / 8 + 4.2) * 0.15;
 
   return (
     <AbsoluteFill
       style={{
-        background: `linear-gradient(${gradientAngle}deg, #000000 0%, ${brandColor}${Math.round(midOpacity * 255).toString(16).padStart(2, "0")} 50%, #030308 100%)`,
+        background: "#3D2B2B",
+        overflow: "hidden",
       }}
-    />
-  );
-};
-
-/**
- * Product image with cinematic entrance — fade + scale from 0.8 to 1.0.
- */
-const ProductReveal: React.FC<{
-  productImage: string;
-  accentColor: string;
-  width: number;
-  height: number;
-}> = ({ productImage, accentColor, width, height }) => {
-  const frame = useCurrentFrame();
-
-  const productOpacity = interpolate(frame, [REVEAL_START, REVEAL_START + 60], [0, 1], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
-
-  // Spring scale — smooth, not bouncy
-  const productScale = spring({
-    frame: frame - REVEAL_START,
-    fps: FPS,
-    config: { damping: 200, stiffness: 80, mass: 1 },
-    from: 0.8,
-    to: 1.0,
-  });
-
-  // Breathing glow on final frame hold — subtle opacity oscillation
-  const glowBreath = 0.18 + Math.sin(frame / 35) * 0.05;
-  const glowSize = 280 + Math.sin(frame / 45) * 15;
-
-  const centerX = width / 2;
-  const centerY = height * 0.42;
-  const rayOpacity = interpolate(frame, [REVEAL_START + 20, REVEAL_START + 80], [0, 1], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
-
-  return (
-    <>
-      {/* Radial glow behind product */}
-      <div
+    >
+      {/* Noise texture overlay — SVG feTurbulence via a semi-transparent pattern */}
+      <AbsoluteFill
         style={{
-          position: "absolute",
-          left: centerX - glowSize,
-          top: centerY - glowSize,
-          width: glowSize * 2,
-          height: glowSize * 2,
-          borderRadius: "50%",
-          background: `radial-gradient(circle, ${accentColor} 0%, transparent 70%)`,
-          opacity: productOpacity * glowBreath,
-          filter: "blur(40px)",
+          backgroundImage:
+            "url(\"data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E\")",
+          backgroundSize: "200px 200px",
+          opacity: 0.35,
         }}
       />
 
-      {/* Light rays */}
-      <LightRays
-        accentColor={accentColor}
-        centerX={centerX}
-        centerY={centerY}
-        opacity={productOpacity * rayOpacity}
+      {/* Red radial pulse behind text */}
+      <AbsoluteFill
+        style={{
+          background: `radial-gradient(ellipse 600px 400px at 50% 45%, rgba(200,50,50,${pulseOpacity}) 0%, transparent 70%)`,
+        }}
       />
+
+      {/* Pain indicator — top-left */}
+      <div
+        style={{
+          position: "absolute",
+          top: 120,
+          left: 80,
+          width: 18,
+          height: 18,
+          borderRadius: "50%",
+          background: "#E03030",
+          transform: `scale(${dot1Scale})`,
+          boxShadow: "0 0 12px 4px rgba(220,40,40,0.5)",
+        }}
+      />
+      {/* Pain indicator — top-right */}
+      <div
+        style={{
+          position: "absolute",
+          top: 200,
+          right: 100,
+          width: 12,
+          height: 12,
+          borderRadius: "50%",
+          background: "#E03030",
+          transform: `scale(${dot2Scale})`,
+          boxShadow: "0 0 10px 3px rgba(220,40,40,0.4)",
+        }}
+      />
+      {/* Pain indicator — bottom-left */}
+      <div
+        style={{
+          position: "absolute",
+          bottom: 160,
+          left: 120,
+          width: 14,
+          height: 14,
+          borderRadius: "50%",
+          background: "#C02020",
+          transform: `scale(${dot3Scale})`,
+          boxShadow: "0 0 10px 3px rgba(180,20,20,0.4)",
+        }}
+      />
+
+      {/* Problem text block */}
+      <div
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          width,
+          height,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 24,
+          padding: "0 60px",
+        }}
+      >
+        {/* Line 1 */}
+        <div
+          style={{
+            fontFamily: interFamily,
+            fontSize: 96,
+            fontWeight: 700,
+            color: "#FFFFFF",
+            textTransform: "uppercase",
+            textAlign: "center",
+            lineHeight: 1.0,
+            letterSpacing: "-0.02em",
+            transform: `scale(${line1Scale})`,
+            opacity: line1Opacity,
+            textShadow: "0 4px 32px rgba(0,0,0,0.6)",
+          }}
+        >
+          {line1}
+        </div>
+
+        {/* Line 2 */}
+        <div
+          style={{
+            fontFamily: interFamily,
+            fontSize: 96,
+            fontWeight: 700,
+            color: "#FF5555",
+            textTransform: "uppercase",
+            textAlign: "center",
+            lineHeight: 1.0,
+            letterSpacing: "-0.02em",
+            transform: `translateY(${line2Y}px)`,
+            opacity: line2Opacity,
+            textShadow: "0 4px 32px rgba(200,0,0,0.4)",
+          }}
+        >
+          {line2}
+        </div>
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+// ─── Scene 2: THE AGITATION ───────────────────────────────────────────────────
+
+const AgitationScene: React.FC<{
+  tagline: string;
+  width: number;
+  height: number;
+}> = ({ tagline, width, height }) => {
+  const frame = useCurrentFrame(); // 0–75 within this Sequence
+
+  const words = tagline.split(" ");
+  const mid = Math.ceil(words.length / 2);
+  const line1 = words.slice(0, mid).join(" ");
+  const line2 = words.slice(mid).join(" ");
+
+  // Background deepens from #3D2B2B to #2A1A1A over 20 frames
+  const bgR = Math.round(interpolate(frame, [0, 20], [61, 42], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }));
+  const bgG = Math.round(interpolate(frame, [0, 20], [43, 26], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }));
+  const bgB = Math.round(interpolate(frame, [0, 20], [43, 26], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }));
+
+  // Shake: decaying oscillation — high amplitude early, settles by frame 35
+  const shakeAmplitude = interpolate(frame, [0, 35], [18, 0], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+  const shakeX = Math.sin(frame * 1.8) * shakeAmplitude;
+
+  // Crack lines: 4 cracks grow from center outward starting frame 20
+  // Each crack is a line from a center point extending outward
+  const crackProgress = (crackStart: number) =>
+    interpolate(frame, [crackStart, crackStart + 18], [0, 1], {
+      extrapolateLeft: "clamp",
+      extrapolateRight: "clamp",
+    });
+
+  const crack1 = crackProgress(20);
+  const crack2 = crackProgress(26);
+  const crack3 = crackProgress(30);
+  const crack4 = crackProgress(34);
+
+  // X stamp: enters at frame 30, rotate -45 → 0, scale 2 → 1
+  const xStampOpacity = interpolate(frame, [30, 38], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+  const xRotate = spring({
+    frame: frame - 30,
+    fps: FPS,
+    config: { damping: 10, stiffness: 200, mass: 1 },
+    from: -45,
+    to: 0,
+  });
+  const xScale = spring({
+    frame: frame - 30,
+    fps: FPS,
+    config: { damping: 8, stiffness: 180, mass: 1 },
+    from: 2.2,
+    to: 1,
+  });
+
+  const centerX = width / 2;
+  const centerY = height * 0.42;
+
+  // Crack geometry: [startX, startY, endX, endY, startFrame]
+  const cracks = [
+    { x1: centerX, y1: centerY - 20, x2: centerX + 260, y2: centerY - 340, p: crack1 },
+    { x1: centerX + 20, y1: centerY + 10, x2: centerX + 320, y2: centerY + 280, p: crack2 },
+    { x1: centerX - 10, y1: centerY - 10, x2: centerX - 290, y2: centerY - 260, p: crack3 },
+    { x1: centerX - 20, y1: centerY + 20, x2: centerX - 240, y2: centerY + 320, p: crack4 },
+  ];
+
+  return (
+    <AbsoluteFill
+      style={{
+        background: `rgb(${bgR},${bgG},${bgB})`,
+        overflow: "hidden",
+      }}
+    >
+      {/* Crack lines via SVG */}
+      <svg
+        style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%" }}
+        viewBox={`0 0 ${width} ${height}`}
+      >
+        {cracks.map((c, i) => {
+          const ex = c.x1 + (c.x2 - c.x1) * c.p;
+          const ey = c.y1 + (c.y2 - c.y1) * c.p;
+          return (
+            <line
+              key={i}
+              x1={c.x1}
+              y1={c.y1}
+              x2={ex}
+              y2={ey}
+              stroke="rgba(255,255,255,0.85)"
+              strokeWidth={i % 2 === 0 ? 2.5 : 1.5}
+            />
+          );
+        })}
+      </svg>
+
+      {/* Shaking problem text */}
+      <div
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          width,
+          height,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 24,
+          padding: "0 60px",
+          transform: `translateX(${shakeX}px)`,
+        }}
+      >
+        <div
+          style={{
+            fontFamily: interFamily,
+            fontSize: 96,
+            fontWeight: 700,
+            color: "#FFFFFF",
+            textTransform: "uppercase",
+            textAlign: "center",
+            lineHeight: 1.0,
+            letterSpacing: "-0.02em",
+            textShadow: "0 4px 32px rgba(0,0,0,0.6)",
+          }}
+        >
+          {line1}
+        </div>
+        <div
+          style={{
+            fontFamily: interFamily,
+            fontSize: 96,
+            fontWeight: 700,
+            color: "#FF5555",
+            textTransform: "uppercase",
+            textAlign: "center",
+            lineHeight: 1.0,
+            letterSpacing: "-0.02em",
+            textShadow: "0 4px 32px rgba(200,0,0,0.4)",
+          }}
+        >
+          {line2}
+        </div>
+      </div>
+
+      {/* Red ✗ stamp */}
+      <div
+        style={{
+          position: "absolute",
+          top: centerY - 160,
+          left: centerX - 160,
+          width: 320,
+          height: 320,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          opacity: xStampOpacity,
+          transform: `rotate(${xRotate}deg) scale(${xScale})`,
+          transformOrigin: "center center",
+        }}
+      >
+        <div
+          style={{
+            fontFamily: interFamily,
+            fontSize: 280,
+            fontWeight: 700,
+            color: "#E02020",
+            lineHeight: 1,
+            textShadow:
+              "0 0 60px rgba(230,30,30,0.8), 0 0 120px rgba(200,0,0,0.5)",
+          }}
+        >
+          ✗
+        </div>
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+// ─── Scene 3: THE SOLUTION ────────────────────────────────────────────────────
+
+const FeaturePill: React.FC<{
+  label: string;
+  x: number;
+  y: number;
+  lineEndX: number;
+  lineEndY: number;
+  brandColor: string;
+  delayFrames: number;
+}> = ({ label, x, y, lineEndX, lineEndY, brandColor, delayFrames }) => {
+  const frame = useCurrentFrame();
+
+  const pillOpacity = interpolate(frame, [delayFrames, delayFrames + 12], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+  const pillY = spring({
+    frame: frame - delayFrames,
+    fps: FPS,
+    config: { damping: 14, stiffness: 120, mass: 1 },
+    from: -16,
+    to: 0,
+  });
+
+  const lineProgress = interpolate(frame, [delayFrames + 6, delayFrames + 20], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+
+  const lx2 = lineEndX + (x - lineEndX) * lineProgress;
+  const ly2 = lineEndY + (y - lineEndY) * lineProgress;
+
+  return (
+    <>
+      {/* Connector line */}
+      <svg
+        style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", pointerEvents: "none" }}
+        viewBox="0 0 1080 1920"
+      >
+        <line
+          x1={lineEndX}
+          y1={lineEndY}
+          x2={lx2}
+          y2={ly2}
+          stroke={brandColor}
+          strokeWidth={1.5}
+          strokeOpacity={pillOpacity * 0.6}
+        />
+      </svg>
+
+      {/* Pill label */}
+      <div
+        style={{
+          position: "absolute",
+          left: x - 80,
+          top: y - 18,
+          opacity: pillOpacity,
+          transform: `translateY(${pillY}px)`,
+        }}
+      >
+        <div
+          style={{
+            fontFamily: interFamily,
+            fontSize: 22,
+            fontWeight: 400,
+            color: brandColor,
+            border: `1.5px solid ${brandColor}`,
+            borderRadius: 100,
+            padding: "6px 20px",
+            background: "rgba(255,255,255,0.92)",
+            whiteSpace: "nowrap",
+            letterSpacing: "0.01em",
+          }}
+        >
+          {label}
+        </div>
+      </div>
+    </>
+  );
+};
+
+const SolutionScene: React.FC<{
+  productName: string;
+  productImage: string;
+  brandColor: string;
+  width: number;
+  height: number;
+}> = ({ productName, productImage, brandColor, width, height }) => {
+  const frame = useCurrentFrame(); // 0–120 within this Sequence
+
+  // Dividing line draws left → right over 30 frames
+  const lineProgress = interpolate(frame, [0, 30], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+
+  // Product name springs in at frame 20
+  const nameOpacity = interpolate(frame, [20, 36], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+  const nameY = spring({
+    frame: frame - 20,
+    fps: FPS,
+    config: { damping: 15, stiffness: 100, mass: 1 },
+    from: -30,
+    to: 0,
+  });
+
+  // Product image scales in at frame 30
+  const imageScale = spring({
+    frame: frame - 30,
+    fps: FPS,
+    config: { damping: 18, stiffness: 90, mass: 1 },
+    from: 0.8,
+    to: 1.0,
+  });
+  const imageOpacity = interpolate(frame, [30, 52], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+
+  const lineY = height * 0.38;
+  const productCenterX = width / 2;
+  const productCenterY = height * 0.58;
+  const productSize = 480;
+
+  // Feature pill positions (absolute coordinates in 1080×1920 space)
+  const pillAnchors = [
+    { x: 820, y: 820, lx: productCenterX + 160, ly: productCenterY - 120, delay: 55 },
+    { x: 180, y: 980, lx: productCenterX - 160, ly: productCenterY + 60, delay: 75 },
+    { x: 830, y: 1100, lx: productCenterX + 170, ly: productCenterY + 130, delay: 95 },
+  ];
+
+  return (
+    <AbsoluteFill
+      style={{
+        background: "#F8FAFF",
+        overflow: "hidden",
+      }}
+    >
+      {/* Subtle brand tint layer */}
+      <AbsoluteFill
+        style={{
+          background: `${brandColor}0D`,
+        }}
+      />
+
+      {/* Horizontal divider line */}
+      <div
+        style={{
+          position: "absolute",
+          top: lineY,
+          left: 60,
+          width: (width - 120) * lineProgress,
+          height: 1.5,
+          background: brandColor,
+          opacity: 0.6,
+        }}
+      />
+
+      {/* Product name above line */}
+      <div
+        style={{
+          position: "absolute",
+          top: lineY - 100,
+          left: 0,
+          width,
+          display: "flex",
+          justifyContent: "center",
+          opacity: nameOpacity,
+          transform: `translateY(${nameY}px)`,
+        }}
+      >
+        <div
+          style={{
+            fontFamily: interFamily,
+            fontSize: 52,
+            fontWeight: 700,
+            color: "#111111",
+            letterSpacing: "-0.01em",
+            textAlign: "center",
+          }}
+        >
+          {productName}
+        </div>
+      </div>
 
       {/* Product image */}
       <div
         style={{
           position: "absolute",
-          left: centerX - 280,
-          top: centerY - 280,
-          width: 560,
-          height: 560,
-          opacity: productOpacity,
-          transform: `scale(${productScale})`,
+          left: productCenterX - productSize / 2,
+          top: productCenterY - productSize / 2,
+          width: productSize,
+          height: productSize,
+          opacity: imageOpacity,
+          transform: `scale(${imageScale})`,
           transformOrigin: "center center",
         }}
       >
@@ -321,187 +603,244 @@ const ProductReveal: React.FC<{
             width: "100%",
             height: "100%",
             objectFit: "contain",
-            filter: "drop-shadow(0px 0px 60px rgba(255,255,255,0.08))",
+            filter: "drop-shadow(0px 20px 40px rgba(0,0,0,0.12))",
           }}
         />
       </div>
-    </>
+
+      {/* Feature callout pills */}
+      {FEATURE_LABELS.map((label, i) => (
+        <FeaturePill
+          key={i}
+          label={label}
+          x={pillAnchors[i].x}
+          y={pillAnchors[i].y}
+          lineEndX={pillAnchors[i].lx}
+          lineEndY={pillAnchors[i].ly}
+          brandColor={brandColor}
+          delayFrames={pillAnchors[i].delay}
+        />
+      ))}
+    </AbsoluteFill>
   );
 };
 
-/**
- * Product name with typewriter-style entrance, tagline fades in below.
- */
-const TextReveal: React.FC<{
+// ─── Scene 4: THE CLOSE ───────────────────────────────────────────────────────
+
+const CloseScene: React.FC<{
   productName: string;
-  tagline: string;
+  productImage: string;
+  price: string;
+  brandColor: string;
   accentColor: string;
   width: number;
   height: number;
-}> = ({ productName, tagline, accentColor, width, height }) => {
-  const frame = useCurrentFrame();
+}> = ({ productName, productImage, price, brandColor, accentColor, width, height }) => {
+  const frame = useCurrentFrame(); // 0–180 (capped to 30 total frames in comp)
 
-  // Product name — typewriter: each character reveals over 2 frames
-  const charsToShow = Math.floor(
-    interpolate(frame, [TEXT_START, TEXT_START + productName.length * 2], [0, productName.length], {
-      extrapolateLeft: "clamp",
-      extrapolateRight: "clamp",
-    })
-  );
+  const productSize = 480;
+  const productCenterX = width / 2;
 
-  const visibleName = productName.slice(0, charsToShow);
+  // Product + labels slide up to top 40%
+  const slideUp = spring({
+    frame,
+    fps: FPS,
+    config: { damping: 18, stiffness: 80, mass: 1 },
+    from: 0,
+    to: -1,
+  });
+  // slideUp is 0 → -1; multiply by offset pixels
+  const productTopY = height * 0.58 + slideUp * (height * 0.18);
 
-  // Cursor blink — visible while typing, fades out after
-  const typingDone = frame > TEXT_START + productName.length * 2 + 10;
-  const cursorOpacity = typingDone
-    ? interpolate(frame, [TEXT_START + productName.length * 2 + 10, TEXT_START + productName.length * 2 + 40], [1, 0], {
-        extrapolateLeft: "clamp",
-        extrapolateRight: "clamp",
-      })
-    : Math.floor(frame / 15) % 2 === 0
-    ? 1
-    : 0;
+  // Price appears at frame 18
+  const priceOpacity = interpolate(frame, [18, 32], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+  const priceScale = spring({
+    frame: frame - 18,
+    fps: FPS,
+    config: { damping: 14, stiffness: 120, mass: 1 },
+    from: 0.7,
+    to: 1,
+  });
 
-  // Tagline fades in with a 25-frame delay after name starts
-  const taglineOpacity = interpolate(frame, [TEXT_START + 25, TEXT_START + 70], [0, 0.75], {
+  // Social proof at frame 30
+  const socialOpacity = interpolate(frame, [30, 44], [0, 1], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
 
-  const taglineY = interpolate(frame, [TEXT_START + 25, TEXT_START + 70], [12, 0], {
+  // CTA at frame 42
+  const ctaOpacity = interpolate(frame, [42, 58], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+  const ctaY = spring({
+    frame: frame - 42,
+    fps: FPS,
+    config: { damping: 14, stiffness: 100, mass: 1 },
+    from: 24,
+    to: 0,
+  });
+
+  // Guarantee text at frame 58
+  const guaranteeOpacity = interpolate(frame, [58, 70], [0, 1], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
 
-  const textCenterY = height * 0.72;
+  // CTA button subtle pulse after it arrives
+  const ctaPulse = 1 + Math.sin(Math.max(0, frame - 70) / 18) * 0.025;
 
   return (
-    <div
+    <AbsoluteFill
       style={{
-        position: "absolute",
-        left: 0,
-        top: textCenterY,
-        width,
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        gap: 16,
+        background: "#F8FAFF",
+        overflow: "hidden",
       }}
     >
-      {/* Product name */}
+      {/* Brand tint */}
+      <AbsoluteFill style={{ background: `${brandColor}0D` }} />
+
+      {/* Product image — slides up */}
       <div
         style={{
-          fontFamily: spaceGroteskFamily,
-          fontSize: 68,
-          fontWeight: 700,
-          color: "#FFFFFF",
-          letterSpacing: "0.04em",
-          textTransform: "uppercase",
-          display: "flex",
-          alignItems: "center",
-          textShadow: `0 0 40px ${accentColor}60`,
+          position: "absolute",
+          left: productCenterX - productSize / 2,
+          top: productTopY - productSize / 2,
+          width: productSize,
+          height: productSize,
+          transformOrigin: "center center",
         }}
       >
-        {visibleName}
-        {/* Blinking cursor */}
-        <span
+        <Img
+          src={staticFile(productImage)}
           style={{
-            display: "inline-block",
-            width: 3,
-            height: 62,
-            background: accentColor,
-            marginLeft: 4,
-            opacity: cursorOpacity,
+            width: "100%",
+            height: "100%",
+            objectFit: "contain",
+            filter: "drop-shadow(0px 20px 40px rgba(0,0,0,0.12))",
           }}
         />
       </div>
 
-      {/* Tagline */}
+      {/* Product name above product (small, elegant) */}
       <div
         style={{
-          fontFamily: spaceGroteskFamily,
-          fontSize: 32,
-          fontWeight: 300,
-          color: "#FFFFFF",
-          letterSpacing: "0.18em",
-          textTransform: "uppercase",
-          opacity: taglineOpacity,
-          transform: `translateY(${taglineY}px)`,
-        }}
-      >
-        {tagline}
-      </div>
-    </div>
-  );
-};
-
-/**
- * Price reveal — fades in with animated underline.
- */
-const PriceReveal: React.FC<{
-  price: string;
-  accentColor: string;
-  width: number;
-  height: number;
-}> = ({ price, accentColor, width, height }) => {
-  const frame = useCurrentFrame();
-
-  const priceOpacity = interpolate(frame, [PRICE_START, PRICE_START + 35], [0, 1], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
-
-  const priceY = interpolate(frame, [PRICE_START, PRICE_START + 35], [10, 0], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
-
-  // Underline expands from 0% width to 100% width
-  const underlineProgress = interpolate(frame, [PRICE_START + 20, PRICE_START + 60], [0, 1], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
-
-  const priceCenterY = height * 0.87;
-  const UNDERLINE_MAX_WIDTH = 180;
-
-  return (
-    <div
-      style={{
-        position: "absolute",
-        left: 0,
-        top: priceCenterY,
-        width,
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        gap: 10,
-        opacity: priceOpacity,
-        transform: `translateY(${priceY}px)`,
-      }}
-    >
-      <div
-        style={{
-          fontFamily: spaceGroteskFamily,
-          fontSize: 56,
-          fontWeight: 600,
-          color: "#FFFFFF",
+          position: "absolute",
+          top: productTopY - productSize / 2 - 64,
+          left: 0,
+          width,
+          textAlign: "center",
+          fontFamily: interFamily,
+          fontSize: 30,
+          fontWeight: 400,
+          color: "#666666",
           letterSpacing: "0.06em",
+          textTransform: "uppercase",
         }}
       >
-        {price}
+        {productName}
       </div>
 
-      {/* Animated accent underline */}
+      {/* Bottom content area: price, social, CTA */}
       <div
         style={{
-          width: UNDERLINE_MAX_WIDTH * underlineProgress,
-          height: 2,
-          background: `linear-gradient(to right, ${accentColor}, ${accentColor}88)`,
-          borderRadius: 2,
+          position: "absolute",
+          top: height * 0.62,
+          left: 0,
+          width,
+          height: height * 0.38,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "flex-start",
+          paddingTop: 32,
+          gap: 20,
         }}
-      />
-    </div>
+      >
+        {/* Price */}
+        <div
+          style={{
+            opacity: priceOpacity,
+            transform: `scale(${priceScale})`,
+            transformOrigin: "center center",
+          }}
+        >
+          <div
+            style={{
+              fontFamily: interFamily,
+              fontSize: 100,
+              fontWeight: 700,
+              color: brandColor,
+              lineHeight: 1,
+              letterSpacing: "-0.03em",
+              textAlign: "center",
+            }}
+          >
+            {price}
+          </div>
+        </div>
+
+        {/* Social proof */}
+        <div
+          style={{
+            opacity: socialOpacity,
+            fontFamily: interFamily,
+            fontSize: 26,
+            fontWeight: 400,
+            color: "#555555",
+            textAlign: "center",
+            letterSpacing: "0.01em",
+          }}
+        >
+          ★★★★★{" "}
+          <span style={{ color: "#111111", fontWeight: 700 }}>12,847</span> happy customers
+        </div>
+
+        {/* CTA button */}
+        <div
+          style={{
+            opacity: ctaOpacity,
+            transform: `translateY(${ctaY}px) scale(${ctaPulse})`,
+            transformOrigin: "center center",
+          }}
+        >
+          <div
+            style={{
+              background: brandColor,
+              borderRadius: 100,
+              padding: "28px 80px",
+              fontFamily: interFamily,
+              fontSize: 36,
+              fontWeight: 700,
+              color: "#FFFFFF",
+              textAlign: "center",
+              letterSpacing: "0.01em",
+              boxShadow: `0 8px 40px ${brandColor}50`,
+            }}
+          >
+            Shop Now →
+          </div>
+        </div>
+
+        {/* Guarantee line */}
+        <div
+          style={{
+            opacity: guaranteeOpacity,
+            fontFamily: interFamily,
+            fontSize: 22,
+            fontWeight: 400,
+            color: "#888888",
+            textAlign: "center",
+            letterSpacing: "0.02em",
+          }}
+        >
+          Free shipping + 30-day guarantee
+        </div>
+      </div>
+    </AbsoluteFill>
   );
 };
 
@@ -518,45 +857,40 @@ export const CinematicReveal: React.FC<CinematicRevealProps> = ({
   const { width, height } = useVideoConfig();
 
   return (
-    <AbsoluteFill style={{ background: "#000000", overflow: "hidden" }}>
-      {/* Layer 1: Animated gradient background */}
-      <AnimatedBackground brandColor={brandColor} />
+    <AbsoluteFill style={{ overflow: "hidden" }}>
+      {/* Scene 1: Problem (frames 0–75) */}
+      <Sequence from={0} durationInFrames={75}>
+        <ProblemScene tagline={tagline} width={width} height={height} />
+      </Sequence>
 
-      {/* Layer 2: Floating particles */}
-      <AbsoluteFill>
-        <Particles accentColor={accentColor} width={width} height={height} />
-      </AbsoluteFill>
+      {/* Scene 2: Agitation (frames 75–150) — HARD CUT, no fade */}
+      <Sequence from={75} durationInFrames={75}>
+        <AgitationScene tagline={tagline} width={width} height={height} />
+      </Sequence>
 
-      {/* Layer 3: Scene 1 — sweep line anticipation */}
-      <AbsoluteFill>
-        <SweepLine accentColor={accentColor} width={width} height={height} />
-      </AbsoluteFill>
-
-      {/* Layer 4: Scene 2 — product reveal with glow + rays */}
-      <AbsoluteFill>
-        <ProductReveal
-          productImage={productImage}
-          accentColor={accentColor}
-          width={width}
-          height={height}
-        />
-      </AbsoluteFill>
-
-      {/* Layer 5: Scene 3 — product name + tagline */}
-      <AbsoluteFill>
-        <TextReveal
+      {/* Scene 3: Solution (frames 150–270) — HARD CUT */}
+      <Sequence from={150} durationInFrames={120}>
+        <SolutionScene
           productName={productName}
-          tagline={tagline}
+          productImage={productImage}
+          brandColor={brandColor}
+          width={width}
+          height={height}
+        />
+      </Sequence>
+
+      {/* Scene 4: Close (frames 270–300) — HARD CUT */}
+      <Sequence from={270} durationInFrames={30}>
+        <CloseScene
+          productName={productName}
+          productImage={productImage}
+          price={price}
+          brandColor={brandColor}
           accentColor={accentColor}
           width={width}
           height={height}
         />
-      </AbsoluteFill>
-
-      {/* Layer 6: Scene 4 — price + underline */}
-      <AbsoluteFill>
-        <PriceReveal price={price} accentColor={accentColor} width={width} height={height} />
-      </AbsoluteFill>
+      </Sequence>
     </AbsoluteFill>
   );
 };
